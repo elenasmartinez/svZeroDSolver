@@ -236,6 +236,87 @@ class Junction(LPNBlock):
         tmp += (self.flow_directions[-1],)
         self.mat['F'].append(tmp)
 
+class MynardJunction:
+    def __init__(self, connecting_block_list= None, name= "NoNameJunction", flow_directions= None, area_list= None, angle_list = None):
+        LPNBlock.__init__(self, connecting_block_list, name=name, flow_directions=flow_directions)
+        self.type = "MynardJunction"
+        self.connecting_block_list = connecting_block_list
+        self.name = name 
+        self.flow_directions = flow_directions 
+        self.area_list = area_list 
+        self.angle_list = angle_list
+    
+    def find_inlet_outlets(self):
+        inlets = []
+        outlets = []
+        for i in range(len(self.flow_directions)): 
+            if self.flow_directions[i] == 1:
+                outlets.append(i)
+            if self.flow_directions[i] == -1:
+                inlets.append(i)
+        if len(inlets) > 1:
+            raise ValueError('There cannot be more than one inlet')
+        return inlets[0], outlets 
+
+    def resistance(self, Q_dat, Q_k, A_dat, A_k, angle):
+        p = 1.06 
+        phi = (angle*np.pi)/180 
+        return (p*Q_dat**2)/(2*A_dat**2*Q_k) + (p*Q_k)/(2*A_k**2) - (p*Q_dat*np.cos(phi))/(A_dat*A_k)
+    
+    def flow_equation(self, inlet, outlets, size):
+        Q_array = [0]*size
+        Q_array[inlet] =  1
+        for outlet in outlets: 
+            Q_array[outlet] = -1 
+        j = 0
+        for i in range(size):
+            Q_array.insert(j, 0)
+            j = j+2
+        return tuple(Q_array) 
+
+    def pressure_equation(self, inlet, outlet, size):
+        Q_dat = curr_y[wire_dict[self.connecting_wires_list[inlet]].LPN_solution_ids[1]]
+        Q_k = curr_y[wire_dict[self.connecting_wires_list[outlet]].LPN_solution_ids[1]]
+        A_dat = self.area_list[inlet]
+        A_k = self.area_list[outlet]
+        angle = self.angle_list[outlet]
+        R = self.resistance(Q_dat, Q_k, A_dat, A_k, angle)
+        equation = [0]*size
+        r_index = outlet*2+1
+        equation[inlet*2] = 1 
+        equation[outlet*2] = -1 
+        equation[r_index] = -R
+        return tuple(equation), r_index 
+   
+    def df_equation(self, outlet, inlet, size):
+        equation = [0]*size
+        Q_dat = curr_y[wire_dict[self.connecting_wires_list[inlet]].LPN_solution_ids[1]]
+        Q_k = curr_y[wire_dict[self.connecting_wires_list[outlet]].LPN_solution_ids[1]]
+        p = 1.06
+        phi = (self.angle_list[outlet]*np.pi)/180 
+        A_dat = self.area_list[inlet]
+        A_k = self.area_list[outlet]    
+        dQ =  ((-p*Q_dat)/(A_dat**2*Q_k) + (p*np.cos(phi))/(A_dat*A_k))*Q_k
+        equation[2*inlet+1] = dQ 
+        dQ = ((p*Q_dat**2)/(2*A_dat**2*Q_k**2)- p/(2*A_k**2))*Q_k 
+        equation[2*outlet+1] = dQ
+        return tuple(equation)
+        
+    def update_constant(self):
+        inlet, outlets = self.find_inlet_outlets()
+        self.mat['F'] = []
+        self.mat['F'].append(self.flow_equation(inlet, outlets, len(self.flow_directions)/2))
+        r_index_array = []
+        for outlet in outlets: 
+            equation, r_index = self.pressure_equation(inlet, outlet, len(self.flow_directions)*2)
+            self.mat['F'].append(equation)
+            r_index_array.append(r_index)
+        self.mat['dF'] = []
+        self.mat['dF'].append(tuple([0]*len(self.flow_directions)*2))
+        for outlet in outlets:
+            equation = self.df_equation(outlet, inlet, len(self.flow_directions)*2)
+            self.mat['dF'].append(equation)
+
 
 class Resistance(LPNBlock):
     """
